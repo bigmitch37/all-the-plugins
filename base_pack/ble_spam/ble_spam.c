@@ -25,6 +25,16 @@ static Attack attacks[] = {
             },
     },
     {
+        .title = "BT Settings Flood",
+        .text = "Fills available BT devices",
+        .protocol = &protocol_nameflood,
+        .payload =
+            {
+                .random_mac = true,
+                .cfg.nameflood = {},
+            },
+    },
+    {
         .title = "iOS 17 Lockup Crash",
         .text = "Newer iPhones, long range",
         .protocol = &protocol_continuity,
@@ -139,7 +149,7 @@ static Attack attacks[] = {
 
 #define ATTACKS_COUNT ((signed)COUNT_OF(attacks))
 
-static uint16_t delays[] = {20, 50, 100, 200, 500};
+static uint16_t delays[] = {30, 50, 100, 200, 500};
 
 typedef struct {
     Ctx ctx;
@@ -176,12 +186,14 @@ const NotificationSequence blink_sequence = {
     NULL,
 };
 static void start_blink(State* state) {
+    if(!state->ctx.led_indicator) return;
     uint16_t period = delays[state->delay];
     if(period <= 100) period += 30;
     blink_message.data.led_blink.period = period;
     notification_message_block(state->ctx.notification, &blink_sequence);
 }
 static void stop_blink(State* state) {
+    if(!state->ctx.led_indicator) return;
     notification_message_block(state->ctx.notification, &sequence_blink_stop);
 }
 
@@ -218,7 +230,10 @@ static int32_t adv_thread(void* _ctx) {
     Payload* payload = &attacks[state->index].payload;
     const Protocol* protocol = attacks[state->index].protocol;
     if(!payload->random_mac) randomize_mac(state);
-    if(state->ctx.led_indicator) start_blink(state);
+    start_blink(state);
+    if(furi_hal_bt_extra_beacon_is_active()) {
+        furi_check(furi_hal_bt_extra_beacon_stop());
+    }
 
     while(state->advertising) {
         if(protocol && payload->mode == PayloadModeBruteforce &&
@@ -231,10 +246,10 @@ static int32_t adv_thread(void* _ctx) {
         start_extra_beacon(state);
 
         furi_thread_flags_wait(true, FuriFlagWaitAny, delays[state->delay]);
-        furi_hal_bt_extra_beacon_stop();
+        furi_check(furi_hal_bt_extra_beacon_stop());
     }
 
-    if(state->ctx.led_indicator) stop_blink(state);
+    stop_blink(state);
     return 0;
 }
 
@@ -291,7 +306,8 @@ static void draw_callback(Canvas* canvas, void* _ctx) {
     const Protocol* protocol = attack ? attack->protocol : NULL;
 
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_icon(canvas, 4 - !protocol, 3, protocol ? protocol->icon : &I_ble_spam);
+    const Icon* icon = protocol ? protocol->icon : &I_ble_spam;
+    canvas_draw_icon(canvas, 4 - (icon == &I_ble_spam), 3, icon);
     canvas_draw_str(canvas, 14, 12, "BLE Spam");
 
     switch(state->index) {
@@ -341,7 +357,7 @@ static void draw_callback(Canvas* canvas, void* _ctx) {
             AlignTop,
             "\e#Delay\e# is time between\n"
             "attack attempts (top right),\n"
-            "keep 20ms for best results",
+            "keep 30ms for best results",
             false);
         break;
     case PageHelpDistance:
@@ -372,7 +388,7 @@ static void draw_callback(Canvas* canvas, void* _ctx) {
             AlignLeft,
             AlignTop,
             "See \e#more info\e# and change\n"
-            "\e#attack options\e# by holding\n"
+            "attack \e#options\e# by holding\n"
             "Ok on each attack page",
             false);
         break;
@@ -387,10 +403,10 @@ static void draw_callback(Canvas* canvas, void* _ctx) {
             48,
             AlignLeft,
             AlignTop,
-            "App+Spam: \e#WillyJL\e# XFW\n"
+            "App+Spam: \e#WillyJL\e#\n"
             "Apple+Crash: \e#ECTO-1A\e#\n"
             "Android+Win: \e#Spooks4576\e#\n"
-            "                                   Version \e#5.1\e#",
+            "                                   Version \e#" FAP_VERSION "\e#",
             false);
         break;
     default: {
@@ -479,15 +495,16 @@ static bool input_callback(InputEvent* input, void* _ctx) {
 
     if(state->ctx.lock_keyboard) {
         consumed = true;
-        with_view_model(
-            state->main_view, State * *model, { (*model)->lock_warning = true; }, true);
+        state->lock_warning = true;
         if(state->lock_count == 0) {
+            furi_timer_set_thread_priority(FuriTimerThreadPriorityElevated);
             furi_timer_start(state->lock_timer, 1000);
         }
         if(input->type == InputTypeShort && input->key == InputKeyBack) {
             state->lock_count++;
         }
         if(state->lock_count >= 3) {
+            furi_timer_set_thread_priority(FuriTimerThreadPriorityElevated);
             furi_timer_start(state->lock_timer, 1);
         }
     } else if(
@@ -506,7 +523,9 @@ static bool input_callback(InputEvent* input, void* _ctx) {
                     if(advertising) toggle_adv(state);
                     state->ctx.attack = &attacks[state->index];
                     scene_manager_set_scene_state(state->ctx.scene_manager, SceneConfig, 0);
+                    view_commit_model(view, consumed);
                     scene_manager_next_scene(state->ctx.scene_manager, SceneConfig);
+                    return consumed;
                 } else if(input->type == InputTypeShort) {
                     toggle_adv(state);
                 }
@@ -551,13 +570,16 @@ static bool input_callback(InputEvent* input, void* _ctx) {
                 if(!advertising) {
                     Payload* payload = &attacks[state->index].payload;
                     if(input->type == InputTypeLong && !payload->random_mac) randomize_mac(state);
+                    if(furi_hal_bt_extra_beacon_is_active()) {
+                        furi_check(furi_hal_bt_extra_beacon_stop());
+                    }
 
                     start_extra_beacon(state);
 
                     if(state->ctx.led_indicator)
                         notification_message(state->ctx.notification, &solid_message);
                     furi_delay_ms(10);
-                    furi_hal_bt_extra_beacon_stop();
+                    furi_check(furi_hal_bt_extra_beacon_stop());
 
                     if(state->ctx.led_indicator)
                         notification_message_block(state->ctx.notification, &sequence_reset_rgb);
@@ -603,6 +625,12 @@ static void lock_timer_callback(void* _ctx) {
     with_view_model(
         state->main_view, State * *model, { (*model)->lock_warning = false; }, true);
     state->lock_count = 0;
+    furi_timer_set_thread_priority(FuriTimerThreadPriorityNormal);
+}
+
+static bool custom_event_callback(void* _ctx, uint32_t event) {
+    State* state = _ctx;
+    return scene_manager_handle_custom_event(state->ctx.scene_manager, event);
 }
 
 static void tick_event_callback(void* _ctx) {
@@ -645,6 +673,7 @@ int32_t ble_spam(void* p) {
     state->ctx.view_dispatcher = view_dispatcher_alloc();
     view_dispatcher_enable_queue(state->ctx.view_dispatcher);
     view_dispatcher_set_event_callback_context(state->ctx.view_dispatcher, state);
+    view_dispatcher_set_custom_event_callback(state->ctx.view_dispatcher, custom_event_callback);
     view_dispatcher_set_tick_event_callback(state->ctx.view_dispatcher, tick_event_callback, 100);
     view_dispatcher_set_navigation_event_callback(state->ctx.view_dispatcher, back_event_callback);
     state->ctx.scene_manager = scene_manager_alloc(&scene_handlers, &state->ctx);
@@ -704,6 +733,9 @@ int32_t ble_spam(void* p) {
     furi_thread_free(state->thread);
     free(state);
 
+    if(furi_hal_bt_extra_beacon_is_active()) {
+        furi_check(furi_hal_bt_extra_beacon_stop());
+    }
     if(prev_cfg_ptr) {
         furi_check(furi_hal_bt_extra_beacon_set_config(&prev_cfg));
     }

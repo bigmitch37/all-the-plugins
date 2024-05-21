@@ -3,6 +3,7 @@
 
 // Hacked together by @Willy-JL and @Spooks4576
 // Documentation at https://developers.google.com/nearby/fast-pair/specifications/introduction
+// https://bluetoothdb.com
 
 static const struct {
     uint32_t value;
@@ -538,8 +539,6 @@ static const struct {
     {0x87B25F, "Animated Rickroll"},
     {0xF38C02, "Boykisser"},
     {0x1448C9, "BLM"},
-    {0xD5AB33, "Xtreme"},
-    {0x0C0B67, "Xtreme Cta"},
     {0x13B39D, "Talking Sasquach"},
     {0xAA1FE1, "ClownMaster"},
     {0x7C6CDB, "Obama"},
@@ -600,6 +599,7 @@ enum {
     _ConfigExtraStart = ConfigExtraStart,
     ConfigModel,
     ConfigInfoRequire,
+    ConfigInfoPatched,
     ConfigCOUNT,
 };
 static void config_callback(void* _ctx, uint32_t index) {
@@ -610,6 +610,8 @@ static void config_callback(void* _ctx, uint32_t index) {
         scene_manager_next_scene(ctx->scene_manager, SceneFastpairModel);
         break;
     case ConfigInfoRequire:
+        break;
+    case ConfigInfoPatched:
         break;
     default:
         ctx->fallback_config_enter(ctx, index);
@@ -698,6 +700,8 @@ static void extra_config(Ctx* ctx) {
 
     variable_item_list_add(list, "Requires Google services", 0, NULL, NULL);
 
+    variable_item_list_add(list, "Patched on new Android", 0, NULL, NULL);
+
     variable_item_list_set_enter_callback(list, config_callback, ctx);
 }
 
@@ -721,7 +725,7 @@ static void model_callback(void* _ctx, uint32_t index) {
     switch(index) {
     case 0:
         payload->mode = PayloadModeRandom;
-        scene_manager_previous_scene(ctx->scene_manager);
+        view_dispatcher_send_custom_event(ctx->view_dispatcher, 0);
         break;
     case models_count + 1:
         scene_manager_next_scene(ctx->scene_manager, SceneFastpairModelCustom);
@@ -731,12 +735,12 @@ static void model_callback(void* _ctx, uint32_t index) {
         payload->bruteforce.counter = 0;
         payload->bruteforce.value = cfg->model;
         payload->bruteforce.size = 3;
-        scene_manager_previous_scene(ctx->scene_manager);
+        view_dispatcher_send_custom_event(ctx->view_dispatcher, 0);
         break;
     default:
         payload->mode = PayloadModeValue;
         cfg->model = models[index - 1].value;
-        scene_manager_previous_scene(ctx->scene_manager);
+        view_dispatcher_send_custom_event(ctx->view_dispatcher, 0);
         break;
     }
 }
@@ -775,8 +779,11 @@ void scene_fastpair_model_on_enter(void* _ctx) {
     view_dispatcher_switch_to_view(ctx->view_dispatcher, ViewSubmenu);
 }
 bool scene_fastpair_model_on_event(void* _ctx, SceneManagerEvent event) {
-    UNUSED(_ctx);
-    UNUSED(event);
+    Ctx* ctx = _ctx;
+    if(event.type == SceneManagerEventTypeCustom) {
+        scene_manager_previous_scene(ctx->scene_manager);
+        return true;
+    }
     return false;
 }
 void scene_fastpair_model_on_exit(void* _ctx) {
@@ -791,8 +798,7 @@ static void model_custom_callback(void* _ctx) {
     payload->mode = PayloadModeValue;
     cfg->model =
         (ctx->byte_store[0] << 0x10) + (ctx->byte_store[1] << 0x08) + (ctx->byte_store[2] << 0x00);
-    scene_manager_previous_scene(ctx->scene_manager);
-    scene_manager_previous_scene(ctx->scene_manager);
+    view_dispatcher_send_custom_event(ctx->view_dispatcher, 0);
 }
 void scene_fastpair_model_custom_on_enter(void* _ctx) {
     Ctx* ctx = _ctx;
@@ -812,8 +818,12 @@ void scene_fastpair_model_custom_on_enter(void* _ctx) {
     view_dispatcher_switch_to_view(ctx->view_dispatcher, ViewByteInput);
 }
 bool scene_fastpair_model_custom_on_event(void* _ctx, SceneManagerEvent event) {
-    UNUSED(_ctx);
-    UNUSED(event);
+    Ctx* ctx = _ctx;
+    if(event.type == SceneManagerEventTypeCustom) {
+        scene_manager_previous_scene(ctx->scene_manager);
+        scene_manager_previous_scene(ctx->scene_manager);
+        return true;
+    }
     return false;
 }
 void scene_fastpair_model_custom_on_exit(void* _ctx) {

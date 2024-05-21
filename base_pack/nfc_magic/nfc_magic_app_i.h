@@ -16,6 +16,7 @@
 #include <gui/modules/byte_input.h>
 #include <gui/modules/widget.h>
 #include <views/dict_attack.h>
+#include <views/write_problems.h>
 
 #include <input/input.h>
 
@@ -32,11 +33,11 @@
 #include <nfc/nfc_poller.h>
 #include <toolbox/keys_dict.h>
 
-#include "lib/magic/nfc_magic_scanner.h"
-#include "lib/magic/protocols/nfc_magic_protocols.h"
-#include "lib/magic/protocols/gen1a/gen1a_poller.h"
-#include "lib/magic/protocols/gen2/gen2_poller.h"
-#include "lib/magic/protocols/gen4/gen4_poller.h"
+#include "magic/nfc_magic_scanner.h"
+#include "magic/protocols/nfc_magic_protocols.h"
+#include "magic/protocols/gen1a/gen1a_poller.h"
+#include "magic/protocols/gen2/gen2_poller.h"
+#include "magic/protocols/gen4/gen4_poller.h"
 
 #include "lib/nfc/protocols/mf_classic/mf_classic_poller.h"
 
@@ -77,6 +78,13 @@ typedef struct {
     bool is_card_present;
 } NfcMagicAppMfClassicDictAttackContext;
 
+typedef struct {
+    uint8_t problem_index;
+    uint8_t problem_index_abs;
+    uint8_t problems_total;
+    Gen2PollerWriteProblems problems;
+} NfcMagicAppWriteProblemsContext;
+
 struct NfcMagicApp {
     ViewDispatcher* view_dispatcher;
     Gui* gui;
@@ -101,14 +109,15 @@ struct NfcMagicApp {
 
     Gen4Poller* gen4_poller;
 
+    Gen4* gen4_data;
+
+    Gen4Password gen4_password;
+    Gen4Password gen4_password_new;
+
     NfcMagicAppMfClassicDictAttackContext nfc_dict_context;
     DictAttack* dict_attack;
-
-    uint32_t gen4_password;
-    uint32_t gen4_password_new;
-
-    uint8_t gen4_config_display[32];
-    uint8_t gen4_revision_display[5];
+    NfcMagicAppWriteProblemsContext write_problems_context;
+    WriteProblems* write_problems;
 
     FuriString* text_box_store;
     uint8_t byte_input_store[NFC_MAGIC_APP_BYTE_INPUT_STORE_SIZE];
@@ -130,6 +139,7 @@ typedef enum {
     NfcMagicAppViewByteInput,
     NfcMagicAppViewWidget,
     NfcMagicAppViewDictAttack,
+    NfcMagicAppViewWriteProblems,
 } NfcMagicAppView;
 
 void nfc_magic_app_blink_start(NfcMagicApp* nfc_magic);

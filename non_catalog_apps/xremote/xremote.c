@@ -16,10 +16,19 @@
 #include "views/xremote_learn_view.h"
 #include "views/xremote_signal_view.h"
 
+#include <infrared/infrared_app.h>
+#include <toolbox/saved_struct.h>
+
 #define TAG "XRemote"
 
 void xremote_get_version(char* version, size_t length) {
-    snprintf(version, length, "%.1f.%d", (double)1.1, XREMOTE_BUILD_NUMBER);
+    snprintf(
+        version,
+        length,
+        "%d.%d.%d",
+        XREMOTE_VERSION_MAJ,
+        XREMOTE_VERSION_MIN,
+        XREMOTE_BUILD_NUMBER);
 }
 
 static uint32_t xremote_view_exit_callback(void* context) {
@@ -84,9 +93,43 @@ int32_t xremote_main(void* p) {
     xremote_app_submenu_add(app, "Settings", XRemoteViewSettings, xremote_submenu_callback);
     xremote_app_submenu_add(app, "About", XRemoteViewAbout, xremote_submenu_callback);
 
+    bool otg_was_enabled = furi_hal_power_is_otg_enabled();
+    InfraredSettings settings = {0};
+    saved_struct_load(
+        INFRARED_SETTINGS_PATH,
+        &settings,
+        sizeof(InfraredSettings),
+        INFRARED_SETTINGS_MAGIC,
+        INFRARED_SETTINGS_VERSION);
+    if(settings.tx_pin < FuriHalInfraredTxPinMax) {
+        furi_hal_infrared_set_tx_output(settings.tx_pin);
+        if(settings.otg_enabled != otg_was_enabled) {
+            if(settings.otg_enabled) {
+                furi_hal_power_enable_otg();
+            } else {
+                furi_hal_power_disable_otg();
+            }
+        }
+    } else {
+        FuriHalInfraredTxPin tx_pin_detected = furi_hal_infrared_detect_tx_output();
+        furi_hal_infrared_set_tx_output(tx_pin_detected);
+        if(tx_pin_detected != FuriHalInfraredTxPinInternal) {
+            furi_hal_power_enable_otg();
+        }
+    }
+
     /* Switch to main menu by default and run disparcher*/
     xremote_app_switch_to_view(app, XRemoteViewSubmenu);
     view_dispatcher_run(app->app_ctx->view_dispatcher);
+
+    furi_hal_infrared_set_tx_output(FuriHalInfraredTxPinInternal);
+    if(furi_hal_power_is_otg_enabled() != otg_was_enabled) {
+        if(otg_was_enabled) {
+            furi_hal_power_enable_otg();
+        } else {
+            furi_hal_power_disable_otg();
+        }
+    }
 
     /* Cleanup and exit */
     xremote_app_free(app);
